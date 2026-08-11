@@ -59,8 +59,8 @@ WORKAROUNDS=()
         path.write_text(json.dumps(value or self.valid_release()), encoding="utf-8")
         return path
 
-    def write_os_manifest(self, value=None):
-        path = self.root / "manifests" / "ubuntu-24.04.env"
+    def write_os_manifest(self, value=None, name="ubuntu-24.04.env"):
+        path = self.root / "manifests" / name
         path.write_text(value or self.valid_os_manifest(), encoding="utf-8")
         return path
 
@@ -112,6 +112,64 @@ WORKAROUNDS=()
         self.write_release(value=value)
         errors = validate.validate_catalog(self.root)
         self.assertTrue(any("unknown field" in error for error in errors))
+
+    def test_release_rejects_strict_url_syntax(self):
+        invalid_urls = (
+            "https://example.com/file with-space",
+            "https://example.com/file%ZZ",
+            "https://example.com:bad/file",
+            "https://example.com:99999/file",
+            "https://user:pass@example.com/file",
+            "https://example.com/file#fragment",
+        )
+        for url in invalid_urls:
+            with self.subTest(url=url):
+                value = self.valid_release()
+                value["components"]["download"] = {
+                    "version": "1.0.0",
+                    "download_url": url,
+                    "sha256": "a" * 64,
+                }
+                self.write_release(value=value)
+                errors = validate.validate_catalog(self.root)
+                self.assertTrue(errors, url)
+
+    def test_release_rejects_invalid_utf8(self):
+        path = self.root / "releases" / "0.75.0.json"
+        path.write_bytes(b"\xff")
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("invalid JSON" in error for error in errors))
+
+    def test_os_manifest_filename_must_match_contract(self):
+        for name in ("Ubuntu-24.04.env", "-24.04.env", "ubuntu-version.env", "ubuntu-24@04.env"):
+            with self.subTest(name=name):
+                self.write_os_manifest(name=name)
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any("filename must match" in error for error in errors))
+
+    def test_os_manifest_accepts_planned_filenames(self):
+        for name in ("ubuntu-22.04.env", "ubuntu-24.04.env", "linuxmint-22.1.env"):
+            with self.subTest(name=name):
+                self.write_os_manifest(name=name)
+                self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_os_manifest_rejects_unquoted_inline_array_item(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            "REQUIRED_REPOS=(https://example.com/repo/)",
+        )
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("invalid array item" in error for error in errors))
+
+    def test_os_manifest_rejects_unquoted_multiline_array_item(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            'REQUIRED_REPOS=(\n  https://example.com/repo/\n)',
+        )
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("invalid array item" in error for error in errors))
 
     def test_release_rejects_duplicate_json_key(self):
         path = self.root / "releases" / "0.75.0.json"

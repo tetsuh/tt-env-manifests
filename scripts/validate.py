@@ -26,7 +26,12 @@ EMPTY_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*\)\s*$", re.ASCII)
 INLINE_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*(.*?)\s*\)\s*$", re.ASCII)
 OPEN_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*$", re.ASCII)
 CLOSE_ARRAY_RE = re.compile(r"^\s*\)\s*$", re.ASCII)
-TOKEN_RE = re.compile(r'^(?:"([A-Za-z0-9_./:+-]*)"|([A-Za-z0-9_./:+-]+))(.*)$', re.ASCII)
+TOKEN_RE = re.compile(r'^"([A-Za-z0-9_./:+-]*)"(.*)$', re.ASCII)
+OS_FILENAME_RE = re.compile(
+    r"^(?P<os_id>[a-z0-9](?:[a-z0-9]|[-_][a-z0-9])*)-"
+    r"(?P<os_version>[0-9](?:[a-z0-9]|[-_.][a-z0-9])*)\.env$",
+    re.ASCII,
+)
 
 TOP_LEVEL_FIELDS = {
     "release",
@@ -87,16 +92,27 @@ def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def validate_https_url(value: Any, where: str) -> str:
     url = require_string(value, where)
-    parsed = urlparse(url)
+    require(
+        all(not char.isspace() and ord(char) >= 0x20 and ord(char) != 0x7F for char in url),
+        f"{where} must not contain whitespace or control characters",
+    )
+    require("#" not in url, f"{where} must not contain a fragment")
+    require(re.search(r"%(?![0-9A-Fa-f]{2})", url) is None, f"{where} has malformed percent encoding")
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValidationError(f"{where} has an invalid URL authority") from exc
     require(parsed.scheme == "https" and parsed.hostname is not None, f"{where} must be an absolute HTTPS URL")
     require(parsed.username is None and parsed.password is None, f"{where} must not contain credentials")
+    require(port is None or 0 <= port <= 65535, f"{where} has an invalid port")
     return url
 
 
 def validate_release(path: Path) -> None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicate_keys)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValidationError(f"invalid JSON: {exc}") from exc
 
     root = require_object(value, "manifest")
@@ -176,8 +192,8 @@ def parse_tokens(text: str, line_number: int) -> list[str]:
         match = TOKEN_RE.fullmatch(remaining)
         if match is None:
             raise ValidationError(f"line {line_number}: invalid array item: {remaining}")
-        values.append(match.group(1) if match.group(1) is not None else match.group(2))
-        remaining = match.group(3).lstrip()
+        values.append(match.group(1))
+        remaining = match.group(2).lstrip()
     return values
 
 
@@ -250,6 +266,8 @@ def catalog_paths(directory: Path, suffix: str, root: Path, errors: list[str]) -
             errors.append(f"{relative}: symlinks are not allowed")
         elif not path.is_file() or path.suffix != suffix:
             errors.append(f"{relative}: unexpected catalog entry")
+        elif suffix == ".env" and OS_FILENAME_RE.fullmatch(path.name) is None:
+            errors.append(f"{relative}: filename must match <os_id>-<os_version>.env")
         else:
             paths.append(path)
     return paths
