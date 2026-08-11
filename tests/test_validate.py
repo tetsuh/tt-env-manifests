@@ -105,6 +105,9 @@ WORKAROUNDS=()
             "ghcr.io/example//image",
             "ghcr.io/-example/image",
             "ghcr.io/example/image-",
+            "ghcr.io/example/a..b",
+            "ghcr.io/example/a___b",
+            "ghcr.io/example/a.-b",
         ):
             with self.subTest(image_url=image_url):
                 value = self.valid_release()
@@ -115,7 +118,7 @@ WORKAROUNDS=()
 
     def test_release_accepts_valid_ghcr_repository_segments(self):
         value = self.valid_release()
-        value["container_components"]["image"]["image_url"] = "ghcr.io/example/team.v2_image-1"
+        value["container_components"]["image"]["image_url"] = "ghcr.io/example/a_b/a__b/a---b/team.v2_image-1"
         self.write_release(value=value)
         self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
 
@@ -142,6 +145,8 @@ WORKAROUNDS=()
             "https://example.com:99999/file",
             "https://user:pass@example.com/file",
             "https://example.com/file#fragment",
+            "https://example.com/file\u0080name",
+            "https://example.com/file\u009fname",
             "https://example<.com/file",
         )
         for url in invalid_urls:

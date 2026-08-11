@@ -2,30 +2,59 @@
 
 ## Stack release manifests
 
-Stack manifests live at `releases/<version>.json`. The filename stem must equal
-the top-level `release` field and must be a stable semantic version without a
-leading `v`.
+Stack manifests live at `releases/<version>.json`. Each release filename must
+be `<release>.json`; its stem and top-level `release` value must be the same
+stable semantic version without a leading `v` (for example, `0.75.0.json`).
+Prerelease versions are not catalog entries.
 
-Required top-level objects:
+A release object must contain exactly these seven top-level fields:
 
-- `components`: logical stack component versions
-- `system_packages`: virtual system-package version pins
-- `python_packages`: Python package version pins
-- `git_components`: repositories pinned to a tag or commit
-- `container_components`: image aliases or images pinned by digest
+- `release`: the stable semantic version without `v`.
+- `description`: a non-empty description string.
+- `components`: component versions. The required `tt-metal` component must be
+  exactly `v<release>`. Other components are either non-empty version strings,
+  or objects containing exactly `version`, `download_url`, and `sha256`.
+  Object downloads use a 64-character hexadecimal SHA-256 digest.
+- `system_packages`: an object whose package names use lowercase letters,
+  digits, `.`, `_`, and `-`, and whose versions are non-empty strings.
+- `python_packages`: an object whose package names use letters, digits, `.`,
+  `_`, and `-`, and whose versions are non-empty strings.
+- `git_components`: an object of entries containing exactly `url` and
+  `version`, with a non-empty version.
+- `container_components`: an object of named image entries. An entry is either
+  `{ "ref": "other-name" }`, referring to another entry, or an object
+  containing exactly `image_url` and `image_tag`.
 
-A component is either a version string or an object containing `version`,
-`download_url`, and a 64-character hexadecimal `sha256`. A container entry is
-either `{ "ref": "other-name" }` or an `image_url` paired with an immutable
-`sha256:<64 lowercase hex>` `image_tag`.
+Unknown fields are rejected. Component, package, git-component, and container
+component names must begin with a letter or digit and then contain only
+letters, digits, `.`, `_`, and `-`.
 
-Unknown fields are rejected by the catalog validator even if an older tt-env
-client would ignore them.
+### URLs and pins
+
+Every artifact `download_url` and git-component `url` must be an absolute
+HTTPS URL with a host. The validator rejects all Unicode `Cc` control
+characters and whitespace, credentials, fragments, malformed percent
+encoding, invalid authorities, and invalid ports (ports must be between 0 and
+65535). Hostnames are RFC reg-name characters (with valid percent escapes) or
+valid bracketed IPv6 addresses. No broader path restrictions are imposed.
+
+Container images are immutable: `image_tag` must be exactly
+`sha256:<64 lowercase hexadecimal digits>`. An `image_url` must begin with
+`ghcr.io/` and contain one or more non-empty lowercase repository components.
+Each component consists of lowercase alphanumeric runs separated only by a
+single dot, one or two underscores, or one or more hyphens; every separator
+must be followed by another alphanumeric run. A `{ "ref": ... }` target must
+exist, cannot refer to itself, and all references must be acyclic.
 
 ## OS manifests
 
-OS manifests live at `manifests/<os_id>-<os_version>.env`. They are parsed as
-data and are never sourced.
+OS manifests live at `manifests/<os_id>-<os_version>.env`. The filename is
+validated as follows: `<os_id>` is lowercase ASCII, starts and ends with an
+alphanumeric character, and may contain lowercase letters, digits, `_`, and
+`-` inside; `<os_version>` starts with a digit, ends with an alphanumeric
+character, and may contain lowercase letters, digits, `.`, `_`, and `-` inside.
+Interior adjacent separators are allowed. OS files must contain ASCII text,
+and are parsed as data and never sourced or executed.
 
 Accepted lines are limited to:
 
@@ -38,15 +67,21 @@ KEY=(
 )
 ```
 
-Blank lines and comments beginning with `#` are allowed. Variable expansion,
-command substitution, semicolons, backticks, backslashes, redirects, and other
-shell syntax are rejected.
+Every array element must be a double-quoted string. Blank lines and comments
+beginning with `#` are allowed. Keys use uppercase ASCII letters, digits, and
+underscores; scalar values are limited to letters, digits, `_`, `.`, `/`, `:`,
+`+`, and `-`. Variable expansion, command substitution, semicolons,
+backticks, backslashes, redirects, and other shell syntax are rejected.
 
-Every OS manifest must define:
+Every OS manifest must define these scalar fields:
 
-- `PKG_MANAGER`
-- `USE_SYSTEM_PACKAGES`
-- `REQUIRED_REPOS`
-- `WORKAROUNDS`
-- virtual mappings for `CMAKE`, `NINJA`, `ZLIB`, `KMD`, `SMI`, `FLASH`,
-  `TOPOLOGY`, and `METALIUM`
+- `PKG_MANAGER`, whose value is `apt` or `dnf`;
+- `USE_SYSTEM_PACKAGES`, whose value is `true` or `false`;
+- `VIRT_PKG_CMAKE`, `VIRT_PKG_NINJA`, `VIRT_PKG_ZLIB`, `VIRT_PKG_KMD`,
+  `VIRT_PKG_SMI`, `VIRT_PKG_FLASH`, `VIRT_PKG_TOPOLOGY`, and
+  `VIRT_PKG_METALIUM`.
+
+It must also define the arrays `REQUIRED_REPOS` and `WORKAROUNDS`. Duplicate
+keys, unterminated arrays, malformed lines, missing required fields, and
+unsafe values are rejected. This parser performs schema validation only; it
+does not install packages or validate hardware compatibility.

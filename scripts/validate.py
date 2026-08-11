@@ -8,6 +8,7 @@ import ipaddress
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -23,10 +24,8 @@ SHA256_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:+-]*$")
 REG_NAME_RE = re.compile(r"^(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f]{2})+$", re.ASCII)
-GHCR_REPOSITORY_RE = re.compile(
-    r"^ghcr\.io/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)*$",
-    re.ASCII,
-)
+GHCR_COMPONENT_RE = r"[a-z0-9]+(?:\.(?:[a-z0-9]+)|_{1,2}(?:[a-z0-9]+)|-+(?:[a-z0-9]+))*"
+GHCR_REPOSITORY_RE = re.compile(r"^ghcr\.io/" + GHCR_COMPONENT_RE + r"(?:/" + GHCR_COMPONENT_RE + r")*$", re.ASCII)
 SCALAR_RE = re.compile(r'^\s*([A-Z_][A-Z0-9_]*)="([A-Za-z0-9_./:+-]*)"\s*$', re.ASCII)
 EMPTY_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*\)\s*$", re.ASCII)
 INLINE_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*(.*?)\s*\)\s*$", re.ASCII)
@@ -99,7 +98,7 @@ def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def validate_https_url(value: Any, where: str) -> str:
     url = require_string(value, where)
     require(
-        all(not char.isspace() and ord(char) >= 0x20 and ord(char) != 0x7F for char in url),
+        all(not char.isspace() and unicodedata.category(char) != "Cc" for char in url),
         f"{where} must not contain whitespace or control characters",
     )
     require("#" not in url, f"{where} must not contain a fragment")
