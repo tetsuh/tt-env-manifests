@@ -1,0 +1,28 @@
+name: Validate manifests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      # Remove --allow-empty after the initial catalog entries are published.
+      - name: Validate catalog
+        run: python3 scripts/validate.py --allow-empty
+
+      - name: Run validator tests
+        run: python3 -m unittest discover -s tests -v
