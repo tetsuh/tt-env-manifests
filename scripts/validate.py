@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import re
 import sys
@@ -21,6 +22,11 @@ SYSTEM_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 SHA256_RE = re.compile(r"^[A-Fa-f0-9]{64}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:+-]*$")
+REG_NAME_RE = re.compile(r"^(?:[A-Za-z0-9._~!$&'()*+,;=-]|%[0-9A-Fa-f]{2})+$", re.ASCII)
+GHCR_REPOSITORY_RE = re.compile(
+    r"^ghcr\.io/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)*$",
+    re.ASCII,
+)
 SCALAR_RE = re.compile(r'^\s*([A-Z_][A-Z0-9_]*)="([A-Za-z0-9_./:+-]*)"\s*$', re.ASCII)
 EMPTY_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*\)\s*$", re.ASCII)
 INLINE_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*(.*?)\s*\)\s*$", re.ASCII)
@@ -107,6 +113,13 @@ def validate_https_url(value: Any, where: str) -> str:
     require(parsed.username is None and parsed.password is None, f"{where} must not contain credentials")
     require(not parsed.netloc.endswith(":"), f"{where} has an invalid port")
     require(port is None or 0 <= port <= 65535, f"{where} has an invalid port")
+    if parsed.netloc.startswith("["):
+        try:
+            ipaddress.IPv6Address(parsed.hostname)
+        except ValueError as exc:
+            raise ValidationError(f"{where} has an invalid IPv6 host") from exc
+    else:
+        require(REG_NAME_RE.fullmatch(parsed.hostname) is not None, f"{where} has an invalid host")
     return url
 
 
@@ -173,7 +186,7 @@ def validate_release(path: Path) -> None:
         else:
             require(set(item) == {"image_url", "image_tag"}, f"container component {name!r} must contain image_url and image_tag")
             image = require_string(item["image_url"], f"container component {name!r} image_url")
-            require(re.fullmatch(r"ghcr\.io/[a-z0-9][a-z0-9._/-]*", image) is not None, f"container component {name!r} image_url must be a valid GHCR repository")
+            require(GHCR_REPOSITORY_RE.fullmatch(image) is not None, f"container component {name!r} image_url must be a valid GHCR repository")
             digest = require_string(item["image_tag"], f"container component {name!r} image_tag")
             require(DIGEST_RE.fullmatch(digest) is not None, f"container component {name!r} image_tag must be an immutable sha256 digest")
 

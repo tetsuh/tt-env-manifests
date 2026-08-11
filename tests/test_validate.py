@@ -99,6 +99,26 @@ WORKAROUNDS=()
         errors = validate.validate_catalog(self.root)
         self.assertTrue(any("invalid git component name" in error for error in errors))
 
+    def test_release_rejects_invalid_ghcr_repository_segments(self):
+        for image_url in (
+            "ghcr.io/example/",
+            "ghcr.io/example//image",
+            "ghcr.io/-example/image",
+            "ghcr.io/example/image-",
+        ):
+            with self.subTest(image_url=image_url):
+                value = self.valid_release()
+                value["container_components"]["image"]["image_url"] = image_url
+                self.write_release(value=value)
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any("image_url" in error for error in errors))
+
+    def test_release_accepts_valid_ghcr_repository_segments(self):
+        value = self.valid_release()
+        value["container_components"]["image"]["image_url"] = "ghcr.io/example/team.v2_image-1"
+        self.write_release(value=value)
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
     def test_release_rejects_mutable_container_tag(self):
         value = self.valid_release()
         value["container_components"]["image"]["image_tag"] = "latest"
@@ -122,6 +142,7 @@ WORKAROUNDS=()
             "https://example.com:99999/file",
             "https://user:pass@example.com/file",
             "https://example.com/file#fragment",
+            "https://example<.com/file",
         )
         for url in invalid_urls:
             with self.subTest(url=url):
@@ -132,8 +153,22 @@ WORKAROUNDS=()
                     "sha256": "a" * 64,
                 }
                 self.write_release(value=value)
-                errors = validate.validate_catalog(self.root)
-                self.assertTrue(errors, url)
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any("download_url" in error for error in errors), url)
+
+    def test_release_accepts_valid_url_hosts(self):
+        value = self.valid_release()
+        value["components"]["download"] = {
+            "version": "1.0.0",
+            "download_url": "https://[2001:db8::1]/file",
+            "sha256": "a" * 64,
+        }
+        value["git_components"]["source"] = {
+            "url": "https://example~host/path",
+            "version": "main",
+        }
+        self.write_release(value=value)
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
 
     def test_release_rejects_invalid_utf8(self):
         path = self.root / "releases" / "0.75.0.json"
