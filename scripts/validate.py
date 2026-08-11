@@ -28,8 +28,8 @@ OPEN_ARRAY_RE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)=\(\s*$", re.ASCII)
 CLOSE_ARRAY_RE = re.compile(r"^\s*\)\s*$", re.ASCII)
 TOKEN_RE = re.compile(r'^"([A-Za-z0-9_./:+-]*)"(.*)$', re.ASCII)
 OS_FILENAME_RE = re.compile(
-    r"^(?P<os_id>[a-z0-9](?:[a-z0-9]|[-_][a-z0-9])*)-"
-    r"(?P<os_version>[0-9](?:[a-z0-9]|[-_.][a-z0-9])*)\.env$",
+    r"^(?P<os_id>[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?)-"
+    r"(?P<os_version>[0-9](?:[a-z0-9._-]*[a-z0-9])?)\.env$",
     re.ASCII,
 )
 
@@ -105,6 +105,7 @@ def validate_https_url(value: Any, where: str) -> str:
         raise ValidationError(f"{where} has an invalid URL authority") from exc
     require(parsed.scheme == "https" and parsed.hostname is not None, f"{where} must be an absolute HTTPS URL")
     require(parsed.username is None and parsed.password is None, f"{where} must not contain credentials")
+    require(not parsed.netloc.endswith(":"), f"{where} has an invalid port")
     require(port is None or 0 <= port <= 65535, f"{where} has an invalid port")
     return url
 

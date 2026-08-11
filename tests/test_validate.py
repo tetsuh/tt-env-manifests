@@ -118,6 +118,7 @@ WORKAROUNDS=()
             "https://example.com/file with-space",
             "https://example.com/file%ZZ",
             "https://example.com:bad/file",
+            "https://example.com:/file",
             "https://example.com:99999/file",
             "https://user:pass@example.com/file",
             "https://example.com/file#fragment",
@@ -141,14 +142,21 @@ WORKAROUNDS=()
         self.assertTrue(any("invalid JSON" in error for error in errors))
 
     def test_os_manifest_filename_must_match_contract(self):
-        for name in ("Ubuntu-24.04.env", "-24.04.env", "ubuntu-version.env", "ubuntu-24@04.env"):
+        for name in (
+            "Ubuntu-24.04.env",
+            "-24.04.env",
+            "ubuntu-version.env",
+            "ubuntu-24@04.env",
+            "ubuntu--24.04.env",
+            "ubuntu-24.04-.env",
+        ):
             with self.subTest(name=name):
                 self.write_os_manifest(name=name)
                 errors = validate.validate_catalog(self.root, allow_empty=True)
                 self.assertTrue(any("filename must match" in error for error in errors))
 
     def test_os_manifest_accepts_planned_filenames(self):
-        for name in ("ubuntu-22.04.env", "ubuntu-24.04.env", "linuxmint-22.1.env"):
+        for name in ("ubuntu-22.04.env", "ubuntu-24.04.env", "linuxmint-22.1.env", "rocky__linux-9.env"):
             with self.subTest(name=name):
                 self.write_os_manifest(name=name)
                 self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
