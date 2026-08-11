@@ -5,16 +5,19 @@
 Stack manifests live at `releases/<version>.json`. Each release filename must
 be `<release>.json`; its stem and top-level `release` value must be the same
 stable semantic version without a leading `v` (for example, `0.75.0.json`).
-Prerelease versions are not catalog entries.
+Prerelease versions are not catalog entries. Release JSON files must be UTF-8
+and must not contain duplicate object keys; duplicate keys are rejected rather
+than silently overwritten.
 
 A release object must contain exactly these seven top-level fields:
 
 - `release`: the stable semantic version without `v`.
 - `description`: a non-empty description string.
-- `components`: component versions. The required `tt-metal` component must be
-  exactly `v<release>`. Other components are either non-empty version strings,
-  or objects containing exactly `version`, `download_url`, and `sha256`.
-  Object downloads use a 64-character hexadecimal SHA-256 digest.
+- `components`: component versions. Every component, including `tt-metal`, is
+  either a non-empty version string or an object containing exactly `version`,
+  `download_url`, and `sha256`. Object downloads use a 64-character
+  hexadecimal SHA-256 digest. Regardless of representation, the effective
+  version of the required `tt-metal` component must be exactly `v<release>`.
 - `system_packages`: an object whose package names use lowercase letters,
   digits, `.`, `_`, and `-`, and whose versions are non-empty strings.
 - `python_packages`: an object whose package names use letters, digits, `.`,
@@ -40,7 +43,8 @@ valid bracketed IPv6 addresses. No broader path restrictions are imposed.
 
 Container images are immutable: `image_tag` must be exactly
 `sha256:<64 lowercase hexadecimal digits>`. An `image_url` must begin with
-`ghcr.io/` and contain one or more non-empty lowercase repository components.
+`ghcr.io/` and contain one or more non-empty lowercase repository components,
+using the Docker/OCI repository grammar.
 Each component consists of lowercase alphanumeric runs separated only by a
 single dot, one or two underscores, or one or more hyphens; every separator
 must be followed by another alphanumeric run. A `{ "ref": ... }` target must
