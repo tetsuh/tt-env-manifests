@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 RELEASES_DIR = ROOT / "releases"
 MANIFESTS_DIR = ROOT / "manifests"
+MAX_OS_RECORD_BYTES = 65536
 
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -210,19 +211,33 @@ def parse_tokens(text: str, line_number: int) -> list[str]:
     return values
 
 
-def validate_os_manifest(path: Path) -> None:
+def validate_os_manifest(path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
     scalars: dict[str, str] = {}
     arrays: dict[str, list[str]] = {}
     open_key: str | None = None
 
     try:
-        content = path.read_text(encoding="utf-8")
+        content = path.read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as exc:
         raise ValidationError(str(exc)) from exc
     require(content.isascii(), "OS manifest must contain ASCII text only")
-    lines = content.splitlines()
+    lines = content.split("\n")
+    for line_number, line in enumerate(lines, 1):
+        require(
+            len(line) < MAX_OS_RECORD_BYTES,
+            f"line {line_number}: record must be shorter than {MAX_OS_RECORD_BYTES} bytes",
+        )
+    for index, char in enumerate(content):
+        codepoint = ord(char)
+        if codepoint == 9 or codepoint == 10:
+            continue
+        if codepoint == 13 and index + 1 < len(content) and content[index + 1] == "\n":
+            continue
+        require(codepoint >= 32 and codepoint != 127, "OS manifest contains disallowed control characters")
 
     for line_number, line in enumerate(lines, 1):
+        if line.endswith("\r"):
+            line = line[:-1]
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -264,20 +279,32 @@ def validate_os_manifest(path: Path) -> None:
     require(not missing_arrays, f"missing array field(s): {', '.join(missing_arrays)}")
     require(scalars["PKG_MANAGER"] in {"apt", "dnf"}, "PKG_MANAGER must be apt or dnf")
     require(scalars["USE_SYSTEM_PACKAGES"] in {"true", "false"}, "USE_SYSTEM_PACKAGES must be true or false")
+    for key in sorted(REQUIRED_OS_SCALARS - {"PKG_MANAGER", "USE_SYSTEM_PACKAGES"}):
+        require_string(scalars[key], key)
+    repositories = arrays["REQUIRED_REPOS"]
+    require(len(repositories) == len(set(repositories)), "REQUIRED_REPOS must not contain duplicate entries")
+    for index, repository in enumerate(repositories):
+        validate_https_url(repository, f"REQUIRED_REPOS[{index}]")
+    return scalars, arrays
 
 
 def catalog_paths(directory: Path, suffix: str, root: Path, errors: list[str]) -> list[Path]:
+    if directory.is_symlink():
+        errors.append(f"{directory.relative_to(root)}: symlinks are not allowed")
+        return []
     if not directory.is_dir():
         errors.append(f"{directory.relative_to(root)}: directory is missing")
         return []
     paths: list[Path] = []
     for path in sorted(directory.iterdir()):
         relative = path.relative_to(root)
-        if path.name == ".gitkeep":
-            continue
         if path.is_symlink():
             errors.append(f"{relative}: symlinks are not allowed")
-        elif not path.is_file() or path.suffix != suffix:
+        elif not path.is_file():
+            errors.append(f"{relative}: unexpected catalog entry")
+        elif path.name == ".gitkeep":
+            continue
+        elif path.suffix != suffix:
             errors.append(f"{relative}: unexpected catalog entry")
         elif suffix == ".env" and OS_FILENAME_RE.fullmatch(path.name) is None:
             errors.append(f"{relative}: filename must match <os_id>-<os_version>.env")

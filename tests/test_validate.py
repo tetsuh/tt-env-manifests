@@ -244,14 +244,133 @@ WORKAROUNDS=()
         errors = validate.validate_catalog(self.root)
         self.assertTrue(any("VIRT_PKG_KMD" in error for error in errors))
 
+    def test_os_manifest_rejects_empty_virtual_mapping(self):
+        value = self.valid_os_manifest().replace('VIRT_PKG_KMD="tenstorrent-dkms"', 'VIRT_PKG_KMD=""')
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("VIRT_PKG_KMD must be a non-empty string" in error for error in errors))
+
+    def test_os_manifest_rejects_invalid_repository_url(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            'REQUIRED_REPOS=("http://example.com/repo/")',
+        )
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("REQUIRED_REPOS[0]" in error for error in errors))
+
+    def test_os_manifest_rejects_duplicate_repositories(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            'REQUIRED_REPOS=("https://example.com/repo/" "https://example.com/repo/")',
+        )
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("must not contain duplicate entries" in error for error in errors))
+
+    def test_os_manifest_allows_empty_repositories(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            "REQUIRED_REPOS=()",
+        )
+        self.write_os_manifest(value)
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_committed_ubuntu_manifests_have_exact_consumer_values(self):
+        expected_scalars = {
+            "PKG_MANAGER": "apt",
+            "USE_SYSTEM_PACKAGES": "true",
+            "VIRT_PKG_CMAKE": "cmake",
+            "VIRT_PKG_NINJA": "ninja-build",
+            "VIRT_PKG_ZLIB": "zlib1g-dev",
+            "VIRT_PKG_KMD": "tenstorrent-dkms",
+            "VIRT_PKG_SMI": "tt-smi",
+            "VIRT_PKG_FLASH": "tt-flash",
+            "VIRT_PKG_TOPOLOGY": "tt-topology",
+            "VIRT_PKG_METALIUM": "tt-metalium",
+        }
+        expected_arrays = {"REQUIRED_REPOS": ["https://ppa.tenstorrent.com/ubuntu/"], "WORKAROUNDS": []}
+        root = Path(__file__).parents[1]
+        for name in ("ubuntu-22.04.env", "ubuntu-24.04.env"):
+            with self.subTest(name=name):
+                scalars, arrays = validate.validate_os_manifest(root / "manifests" / name)
+                self.assertEqual(scalars, expected_scalars)
+                self.assertEqual(arrays, expected_arrays)
+
     def test_os_manifest_rejects_unicode_whitespace(self):
         self.write_os_manifest("\u00a0" + self.valid_os_manifest())
         errors = validate.validate_catalog(self.root)
         self.assertTrue(any("ASCII text only" in error for error in errors))
 
+    def test_os_manifest_rejects_non_lf_record_separators(self):
+        for separator in ("\x0b", "\x0c", "\r"):
+            with self.subTest(separator=repr(separator)):
+                self.write_os_manifest(self.valid_os_manifest().replace("\n", separator, 1))
+                errors = validate.validate_catalog(self.root)
+                self.assertTrue(any("control characters" in error for error in errors))
+
+    def test_os_manifest_accepts_crlf(self):
+        self.write_os_manifest(self.valid_os_manifest().replace("\n", "\r\n"))
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_os_manifest_rejects_oversized_records(self):
+        for record in (
+            "#" + "x" * (validate.MAX_OS_RECORD_BYTES - 1),
+            "PKG_MANAGER=\"" + "a" * (validate.MAX_OS_RECORD_BYTES - 14) + "\"",
+        ):
+            with self.subTest(record_prefix=record[:10]):
+                self.write_os_manifest(record + "\n" + self.valid_os_manifest())
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any("record must be shorter" in error for error in errors))
+
+    def test_os_manifest_accepts_maximum_record_boundary(self):
+        record = "#" + "x" * (validate.MAX_OS_RECORD_BYTES - 2)
+        self.write_os_manifest(record + "\n" + self.valid_os_manifest())
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_os_manifest_rejects_lone_cr(self):
+        self.write_os_manifest(self.valid_os_manifest().replace("\n", "\r"))
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("control characters" in error for error in errors))
+
+    def test_catalog_rejects_symlinked_catalog_directories(self):
+        for name in ("manifests", "releases"):
+            with self.subTest(name=name):
+                target = self.root / f"outside-{name}"
+                target.mkdir()
+                original = self.root / name
+                original.rmdir()
+                original.symlink_to(target, target_is_directory=True)
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any(f"{name}: symlinks are not allowed" in error for error in errors))
+                original.unlink()
+                original.mkdir()
+
     def test_empty_catalog_requires_explicit_bootstrap_mode(self):
         self.assertTrue(validate.validate_catalog(self.root))
         self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_catalog_accepts_regular_gitkeep(self):
+        (self.root / "releases" / ".gitkeep").write_text("", encoding="utf-8")
+        (self.root / "manifests" / ".gitkeep").write_text("", encoding="utf-8")
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_catalog_rejects_unsafe_gitkeep_entries(self):
+        for kind in ("symlink", "directory"):
+            with self.subTest(kind=kind):
+                target = self.root / f"outside-{kind}"
+                if kind == "symlink":
+                    target.write_text("", encoding="utf-8")
+                    (self.root / "manifests" / ".gitkeep").symlink_to(target)
+                else:
+                    (self.root / "manifests" / ".gitkeep").mkdir()
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any("manifests/.gitkeep" in error for error in errors))
+                gitkeep = self.root / "manifests" / ".gitkeep"
+                if gitkeep.is_symlink() or gitkeep.is_file():
+                    gitkeep.unlink()
+                else:
+                    gitkeep.rmdir()
 
     def test_catalog_rejects_symlink(self):
         target = self.root / "outside.json"
