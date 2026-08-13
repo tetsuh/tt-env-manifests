@@ -292,6 +292,22 @@ WORKAROUNDS=()
                 "runtime": "1d811ad04e5d212ebe6436edfbfde979d43c5fa7600880baad8b2059b9c1510b",
                 "models": "be2275a89d4209be0f42d91081b851acfd3ac0938fe5ce035997da0eda8ba2f4",
             },
+            "0.69.0": {
+                "runtime": "7598666e0b099e5a2cd77f5e579c2ed2f2c6f514cf3013eb25c2c5ff1b3f7b19",
+                "models": "48d938159be63b73cffe16f0cef116ff7dff1334e956f288ea8b55d38bf96c8d",
+            },
+            "0.70.1": {
+                "runtime": "ead7b800bdb6bebb9425c377222314447c5b2052f6e8b1e3c9caa1818cb7d8c4",
+                "models": "02151bea82bc345afe6171b72d9232332d90699f550e6c5b35a645fa19569b3e",
+            },
+            "0.71.2": {
+                "runtime": "8e32440a458bcff3b804916ddd917d22532594b72696b5bc1618bf0eec7a9274",
+                "models": "788e877ae073bb7dd933d997e9ae5dc0bddd7227f7ebb14baf4f4b44709d14ee",
+            },
+            "0.72.0": {
+                "runtime": "44d92ec1ce77b9ba7f11a76630b3a2a046879565f5f9fb1a185b70a3e86010bb",
+                "models": "39f400743f061ba29a43e2cfee7f0b5b6ed7345da6b55f7f04ff16f7430fd5c5",
+            },
         }
         root = Path(__file__).parents[1]
         for release, digests in expected.items():
@@ -324,6 +340,12 @@ WORKAROUNDS=()
                         "image_tag": "sha256:" + digests["models"],
                     },
                 )
+
+    def test_prerelease_only_versions_are_not_catalog_entries(self):
+        root = Path(__file__).parents[1]
+        for release in ("0.70.0", "0.71.1"):
+            with self.subTest(release=release):
+                self.assertFalse((root / "releases" / f"{release}.json").exists())
 
     def test_committed_ubuntu_manifests_have_exact_consumer_values(self):
         expected_scalars = {
