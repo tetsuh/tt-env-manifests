@@ -1,0 +1,26 @@
+{
+  "release": "0.70.1",
+  "description": "Historical Tenstorrent tt-metal v0.70.1 stack release.",
+  "components": {
+    "tt-metal": "v0.70.1",
+    "tt-kmd": "2.5.0",
+    "firmware": "19.2.0",
+    "tt-smi": "3.0.38"
+  },
+  "system_packages": {},
+  "python_packages": {},
+  "git_components": {},
+  "container_components": {
+    "tt-metalium-ubuntu24": {
+      "image_url": "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-24.04-release-amd64",
+      "image_tag": "sha256:ead7b800bdb6bebb9425c377222314447c5b2052f6e8b1e3c9caa1818cb7d8c4"
+    },
+    "tt-metalium": {
+      "ref": "tt-metalium-ubuntu24"
+    },
+    "tt-metalium-models": {
+      "image_url": "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-models-amd64",
+      "image_tag": "sha256:02151bea82bc345afe6171b72d9232332d90699f550e6c5b35a645fa19569b3e"
+    }
+  }
+}
