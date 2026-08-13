@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -312,6 +313,55 @@ WORKAROUNDS=()
     def test_os_manifest_accepts_crlf(self):
         self.write_os_manifest(self.valid_os_manifest().replace("\n", "\r\n"))
         self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_catalog_rejects_replaced_release_entry(self):
+        path = self.write_release()
+        directory_fd, entries = validate.catalog_paths(self.root / "releases", ".json", self.root, [])
+        self.assertIsNotNone(directory_fd)
+        try:
+            replacement = path.with_name(path.name + ".replacement")
+            replacement.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            os.replace(replacement, path)
+            with self.assertRaises(validate.ValidationError):
+                validate.validate_release_content(path, validate.read_catalog_entry(entries[0]))
+        finally:
+            os.close(directory_fd)
+
+    def test_catalog_rejects_replaced_os_entry(self):
+        path = self.write_os_manifest()
+        directory_fd, entries = validate.catalog_paths(self.root / "manifests", ".env", self.root, [])
+        self.assertIsNotNone(directory_fd)
+        try:
+            replacement = path.with_name(path.name + ".replacement")
+            replacement.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            os.replace(replacement, path)
+            with self.assertRaises(validate.ValidationError):
+                validate.validate_os_manifest_content(path, validate.read_catalog_entry(entries[0]))
+        finally:
+            os.close(directory_fd)
+
+    def test_os_manifest_accepts_exact_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        target = validate.MAX_OS_TOTAL_BYTES
+        content = bytearray(base)
+        remaining = target - len(content)
+        while remaining:
+            line_length = min(65535, remaining)
+            if line_length == 1:
+                content.extend(b"\n")
+            else:
+                content.extend(b"#" + b"x" * (line_length - 2) + b"\n")
+            remaining -= line_length
+        self.write_os_manifest(content.decode("ascii"))
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_os_manifest_rejects_over_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        content = base + b"#x\n" * ((validate.MAX_OS_TOTAL_BYTES - len(base)) // 3 + 1)
+        self.assertGreater(len(content), validate.MAX_OS_TOTAL_BYTES)
+        self.write_os_manifest(content.decode("ascii"))
+        errors = validate.validate_catalog(self.root, allow_empty=True)
+        self.assertTrue(any("aggregate limit" in error for error in errors))
 
     def test_os_manifest_rejects_oversized_records(self):
         for record in (

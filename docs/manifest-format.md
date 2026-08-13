@@ -59,7 +59,9 @@ alphanumeric character, and may contain lowercase letters, digits, `_`, and
 character, and may contain lowercase letters, digits, `.`, `_`, and `-` inside.
 Interior adjacent separators are allowed. OS files must contain ASCII text, and each pre-LF record must be shorter than
 65,536 bytes, matching the default record limit of tt-env-go's `bufio.Scanner`.
-CRLF is accepted; other control separators are rejected. Files are parsed as
+The total OS-manifest input is also limited to 1 MiB (1,048,576 bytes); the
+validator reads at most one byte beyond that bound before decoding. CRLF is
+accepted; other control separators are rejected. Files are parsed as
 data and never sourced or executed.
 
 Accepted lines are limited to:

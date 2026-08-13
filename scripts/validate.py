@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import os
 import re
+import stat
 import sys
 import unicodedata
 from pathlib import Path
@@ -17,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RELEASES_DIR = ROOT / "releases"
 MANIFESTS_DIR = ROOT / "manifests"
 MAX_OS_RECORD_BYTES = 65536
+MAX_OS_TOTAL_BYTES = 1 * 1024 * 1024
 
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -123,9 +126,9 @@ def validate_https_url(value: Any, where: str) -> str:
     return url
 
 
-def validate_release(path: Path) -> None:
+def validate_release_content(path: Path, content: bytes) -> None:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicate_keys)
+        value = json.loads(content.decode("utf-8"), object_pairs_hook=reject_duplicate_keys)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValidationError(f"invalid JSON: {exc}") from exc
 
@@ -199,6 +202,14 @@ def validate_release(path: Path) -> None:
             current = containers[current]["ref"]
 
 
+def validate_release(path: Path) -> None:
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        raise ValidationError(f"invalid JSON: {exc}") from exc
+    validate_release_content(path, content)
+
+
 def parse_tokens(text: str, line_number: int) -> list[str]:
     values: list[str] = []
     remaining = text.lstrip()
@@ -211,14 +222,14 @@ def parse_tokens(text: str, line_number: int) -> list[str]:
     return values
 
 
-def validate_os_manifest(path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
+def validate_os_manifest_content(path: Path, content_bytes: bytes) -> tuple[dict[str, str], dict[str, list[str]]]:
     scalars: dict[str, str] = {}
     arrays: dict[str, list[str]] = {}
     open_key: str | None = None
 
     try:
-        content = path.read_bytes().decode("utf-8")
-    except (OSError, UnicodeError) as exc:
+        content = content_bytes.decode("utf-8")
+    except UnicodeError as exc:
         raise ValidationError(str(exc)) from exc
     require(content.isascii(), "OS manifest must contain ASCII text only")
     lines = content.split("\n")
@@ -288,50 +299,116 @@ def validate_os_manifest(path: Path) -> tuple[dict[str, str], dict[str, list[str
     return scalars, arrays
 
 
-def catalog_paths(directory: Path, suffix: str, root: Path, errors: list[str]) -> list[Path]:
-    if directory.is_symlink():
-        errors.append(f"{directory.relative_to(root)}: symlinks are not allowed")
-        return []
-    if not directory.is_dir():
-        errors.append(f"{directory.relative_to(root)}: directory is missing")
-        return []
-    paths: list[Path] = []
-    for path in sorted(directory.iterdir()):
-        relative = path.relative_to(root)
-        if path.is_symlink():
-            errors.append(f"{relative}: symlinks are not allowed")
-        elif not path.is_file():
-            errors.append(f"{relative}: unexpected catalog entry")
-        elif path.name == ".gitkeep":
-            continue
-        elif path.suffix != suffix:
-            errors.append(f"{relative}: unexpected catalog entry")
-        elif suffix == ".env" and OS_FILENAME_RE.fullmatch(path.name) is None:
-            errors.append(f"{relative}: filename must match <os_id>-<os_version>.env")
+def validate_os_manifest(path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        raise ValidationError(str(exc)) from exc
+    return validate_os_manifest_content(path, content)
+
+
+CatalogEntry = tuple[Path, int, str, os.stat_result]
+
+
+def catalog_paths(directory: Path, suffix: str, root: Path, errors: list[str]) -> tuple[int | None, list[CatalogEntry]]:
+    try:
+        directory_fd = os.open(
+            directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+    except OSError:
+        if directory.is_symlink():
+            errors.append(f"{directory.relative_to(root)}: symlinks are not allowed")
         else:
-            paths.append(path)
-    return paths
+            errors.append(f"{directory.relative_to(root)}: directory is missing")
+        return None, []
+
+    entries: list[CatalogEntry] = []
+    try:
+        names = sorted(os.listdir(directory_fd))
+        for name in names:
+            path = directory / name
+            relative = path.relative_to(root)
+            try:
+                metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError:
+                errors.append(f"{relative}: catalog entry cannot be inspected")
+                continue
+            if stat.S_ISLNK(metadata.st_mode):
+                errors.append(f"{relative}: symlinks are not allowed")
+            elif not stat.S_ISREG(metadata.st_mode):
+                errors.append(f"{relative}: unexpected catalog entry")
+            elif name == ".gitkeep":
+                continue
+            elif not name.endswith(suffix):
+                errors.append(f"{relative}: unexpected catalog entry")
+            elif suffix == ".env" and OS_FILENAME_RE.fullmatch(name) is None:
+                errors.append(f"{relative}: filename must match <os_id>-<os_version>.env")
+            else:
+                entries.append((path, directory_fd, name, metadata))
+    except BaseException:
+        os.close(directory_fd)
+        raise
+    return directory_fd, entries
+
+
+def read_catalog_entry(entry: CatalogEntry, max_bytes: int | None = None) -> bytes:
+    path, directory_fd, name, expected = entry
+    try:
+        file_fd = os.open(name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=directory_fd)
+    except OSError as exc:
+        raise ValidationError(f"cannot open catalog entry: {exc}") from exc
+    try:
+        actual = os.fstat(file_fd)
+        require(
+            stat.S_ISREG(actual.st_mode)
+            and (actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino),
+            "catalog entry changed during validation",
+        )
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            size = 65536 if max_bytes is None else min(65536, max_bytes + 1 - total)
+            chunk = os.read(file_fd, size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if max_bytes is not None and total > max_bytes:
+                raise ValidationError(f"file exceeds aggregate limit of {max_bytes} bytes")
+        return b"".join(chunks)
+    except OSError as exc:
+        raise ValidationError(f"cannot read catalog entry: {exc}") from exc
+    finally:
+        os.close(file_fd)
 
 
 def validate_catalog(root: Path = ROOT, allow_empty: bool = False) -> list[str]:
     errors: list[str] = []
-    release_paths = catalog_paths(root / "releases", ".json", root, errors)
-    manifest_paths = catalog_paths(root / "manifests", ".env", root, errors)
-    if not allow_empty:
-        if not release_paths:
-            errors.append("releases: at least one release manifest is required")
-        if not manifest_paths:
-            errors.append("manifests: at least one OS manifest is required")
-    for path in release_paths:
-        try:
-            validate_release(path)
-        except ValidationError as exc:
-            errors.append(f"{path.relative_to(root)}: {exc}")
-    for path in manifest_paths:
-        try:
-            validate_os_manifest(path)
-        except ValidationError as exc:
-            errors.append(f"{path.relative_to(root)}: {exc}")
+    release_fd, release_entries = catalog_paths(root / "releases", ".json", root, errors)
+    manifest_fd, manifest_entries = catalog_paths(root / "manifests", ".env", root, errors)
+    try:
+        if not allow_empty:
+            if not release_entries:
+                errors.append("releases: at least one release manifest is required")
+            if not manifest_entries:
+                errors.append("manifests: at least one OS manifest is required")
+        for entry in release_entries:
+            path = entry[0]
+            try:
+                validate_release_content(path, read_catalog_entry(entry))
+            except ValidationError as exc:
+                errors.append(f"{path.relative_to(root)}: {exc}")
+        for entry in manifest_entries:
+            path = entry[0]
+            try:
+                validate_os_manifest_content(path, read_catalog_entry(entry, MAX_OS_TOTAL_BYTES))
+            except ValidationError as exc:
+                errors.append(f"{path.relative_to(root)}: {exc}")
+    finally:
+        for directory_fd in (release_fd, manifest_fd):
+            if directory_fd is not None:
+                os.close(directory_fd)
     return errors
 
 
