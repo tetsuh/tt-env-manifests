@@ -57,8 +57,12 @@ validated as follows: `<os_id>` is lowercase ASCII, starts and ends with an
 alphanumeric character, and may contain lowercase letters, digits, `_`, and
 `-` inside; `<os_version>` starts with a digit, ends with an alphanumeric
 character, and may contain lowercase letters, digits, `.`, `_`, and `-` inside.
-Interior adjacent separators are allowed. OS files must contain ASCII text,
-and are parsed as data and never sourced or executed.
+Interior adjacent separators are allowed. OS files must contain ASCII text, and each pre-LF record must be shorter than
+65,536 bytes, matching the default record limit of tt-env-go's `bufio.Scanner`.
+The total OS-manifest input is also limited to 1 MiB (1,048,576 bytes); the
+validator reads at most one byte beyond that bound before decoding. CRLF is
+accepted; other control separators are rejected. Files are parsed as
+data and never sourced or executed.
 
 Accepted lines are limited to:
 
@@ -83,9 +87,17 @@ Every OS manifest must define these scalar fields:
 - `USE_SYSTEM_PACKAGES`, whose value is `true` or `false`;
 - `VIRT_PKG_CMAKE`, `VIRT_PKG_NINJA`, `VIRT_PKG_ZLIB`, `VIRT_PKG_KMD`,
   `VIRT_PKG_SMI`, `VIRT_PKG_FLASH`, `VIRT_PKG_TOPOLOGY`, and
-  `VIRT_PKG_METALIUM`.
+  `VIRT_PKG_METALIUM`. Every virtual mapping must be non-empty. `tt-env-go`
+  resolves these names in stack-policy order before installing system packages;
+  the concrete values are package-manager package names.
 
-It must also define the arrays `REQUIRED_REPOS` and `WORKAROUNDS`. Duplicate
-keys, unterminated arrays, malformed lines, missing required fields, and
-unsafe values are rejected. This parser performs schema validation only; it
-does not install packages or validate hardware compatibility.
+It must also define the arrays `REQUIRED_REPOS` and `WORKAROUNDS`. Each
+`REQUIRED_REPOS` entry is a non-empty absolute HTTPS URL validated with the
+catalog's strict URL rules, and duplicate repository entries are rejected.
+An empty `REQUIRED_REPOS=()` is valid for a distro-native catalog that needs no
+additional repository. `tt-env-go` passes non-empty entries to its native
+repository adapter before package metadata refresh; this catalog does not
+execute that installation step. Duplicate keys, unterminated arrays, malformed
+lines, missing required fields, and unsafe values are rejected. This parser
+performs schema and manifest-semantic validation only; it does not install
+packages or validate hardware compatibility.

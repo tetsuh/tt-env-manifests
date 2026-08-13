@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location(
@@ -244,14 +246,220 @@ WORKAROUNDS=()
         errors = validate.validate_catalog(self.root)
         self.assertTrue(any("VIRT_PKG_KMD" in error for error in errors))
 
+    def test_os_manifest_rejects_empty_virtual_mapping(self):
+        value = self.valid_os_manifest().replace('VIRT_PKG_KMD="tenstorrent-dkms"', 'VIRT_PKG_KMD=""')
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("VIRT_PKG_KMD must be a non-empty string" in error for error in errors))
+
+    def test_os_manifest_rejects_invalid_repository_url(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            'REQUIRED_REPOS=("http://example.com/repo/")',
+        )
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("REQUIRED_REPOS[0]" in error for error in errors))
+
+    def test_os_manifest_rejects_duplicate_repositories(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            'REQUIRED_REPOS=("https://example.com/repo/" "https://example.com/repo/")',
+        )
+        self.write_os_manifest(value)
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("must not contain duplicate entries" in error for error in errors))
+
+    def test_os_manifest_allows_empty_repositories(self):
+        value = self.valid_os_manifest().replace(
+            'REQUIRED_REPOS=("https://example.com/repo/")',
+            "REQUIRED_REPOS=()",
+        )
+        self.write_os_manifest(value)
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_committed_ubuntu_manifests_have_exact_consumer_values(self):
+        expected_scalars = {
+            "PKG_MANAGER": "apt",
+            "USE_SYSTEM_PACKAGES": "true",
+            "VIRT_PKG_CMAKE": "cmake",
+            "VIRT_PKG_NINJA": "ninja-build",
+            "VIRT_PKG_ZLIB": "zlib1g-dev",
+            "VIRT_PKG_KMD": "tenstorrent-dkms",
+            "VIRT_PKG_SMI": "tt-smi",
+            "VIRT_PKG_FLASH": "tt-flash",
+            "VIRT_PKG_TOPOLOGY": "tt-topology",
+            "VIRT_PKG_METALIUM": "tt-metalium",
+        }
+        expected_arrays = {"REQUIRED_REPOS": ["https://ppa.tenstorrent.com/ubuntu/"], "WORKAROUNDS": []}
+        root = Path(__file__).parents[1]
+        for name in ("ubuntu-22.04.env", "ubuntu-24.04.env"):
+            with self.subTest(name=name):
+                scalars, arrays = validate.validate_os_manifest(root / "manifests" / name)
+                self.assertEqual(scalars, expected_scalars)
+                self.assertEqual(arrays, expected_arrays)
+
     def test_os_manifest_rejects_unicode_whitespace(self):
         self.write_os_manifest("\u00a0" + self.valid_os_manifest())
         errors = validate.validate_catalog(self.root)
         self.assertTrue(any("ASCII text only" in error for error in errors))
 
+    def test_os_manifest_rejects_non_lf_record_separators(self):
+        for separator in ("\x0b", "\x0c", "\r"):
+            with self.subTest(separator=repr(separator)):
+                self.write_os_manifest(self.valid_os_manifest().replace("\n", separator, 1))
+                errors = validate.validate_catalog(self.root)
+                self.assertTrue(any("control characters" in error for error in errors))
+
+    def test_os_manifest_accepts_crlf(self):
+        self.write_os_manifest(self.valid_os_manifest().replace("\n", "\r\n"))
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_catalog_rejects_replaced_release_entry(self):
+        path = self.write_release()
+        directory_fd, entries = validate.catalog_paths(self.root / "releases", ".json", self.root, [])
+        self.assertIsNotNone(directory_fd)
+        try:
+            replacement = path.with_name(path.name + ".replacement")
+            replacement.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            os.replace(replacement, path)
+            with self.assertRaises(validate.ValidationError):
+                validate.validate_release_content(path, validate.read_catalog_entry(entries[0]))
+        finally:
+            os.close(directory_fd)
+
+    def test_catalog_rejects_replaced_os_entry(self):
+        path = self.write_os_manifest()
+        directory_fd, entries = validate.catalog_paths(self.root / "manifests", ".env", self.root, [])
+        self.assertIsNotNone(directory_fd)
+        try:
+            replacement = path.with_name(path.name + ".replacement")
+            replacement.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            os.replace(replacement, path)
+            with self.assertRaises(validate.ValidationError):
+                validate.validate_os_manifest_content(path, validate.read_catalog_entry(entries[0]))
+        finally:
+            os.close(directory_fd)
+
+    def test_os_manifest_accepts_exact_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        target = validate.MAX_OS_TOTAL_BYTES
+        content = bytearray(base)
+        remaining = target - len(content)
+        while remaining:
+            line_length = min(65535, remaining)
+            if line_length == 1:
+                content.extend(b"\n")
+            else:
+                content.extend(b"#" + b"x" * (line_length - 2) + b"\n")
+            remaining -= line_length
+        self.write_os_manifest(content.decode("ascii"))
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_os_manifest_rejects_over_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        content = base + b"#x\n" * ((validate.MAX_OS_TOTAL_BYTES - len(base)) // 3 + 1)
+        self.assertGreater(len(content), validate.MAX_OS_TOTAL_BYTES)
+        self.write_os_manifest(content.decode("ascii"))
+        errors = validate.validate_catalog(self.root, allow_empty=True)
+        self.assertTrue(any("aggregate limit" in error for error in errors))
+
+    def test_direct_os_manifest_accepts_exact_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        padding = validate.MAX_OS_TOTAL_BYTES - len(base)
+        content = bytearray(base)
+        while padding >= 2:
+            chunk = min(65535, padding)
+            content.extend(b"#" + b"x" * (chunk - 2) + b"\n")
+            padding -= chunk
+        if padding:
+            content.extend(b"\n")
+        self.assertEqual(len(content), validate.MAX_OS_TOTAL_BYTES)
+        path = self.write_os_manifest(content.decode("ascii"))
+        validate.validate_os_manifest(path)
+
+    def test_direct_os_manifest_rejects_over_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        content = base + b"#x\n" * ((validate.MAX_OS_TOTAL_BYTES - len(base)) // 3 + 1)
+        self.assertGreater(len(content), validate.MAX_OS_TOTAL_BYTES)
+        path = self.write_os_manifest(content.decode("ascii"))
+        with self.assertRaisesRegex(validate.ValidationError, "aggregate limit"):
+            validate.validate_os_manifest(path)
+
+    def test_os_manifest_rejects_oversized_records(self):
+        for record in (
+            "#" + "x" * (validate.MAX_OS_RECORD_BYTES - 1),
+            "PKG_MANAGER=\"" + "a" * (validate.MAX_OS_RECORD_BYTES - 14) + "\"",
+        ):
+            with self.subTest(record_prefix=record[:10]):
+                self.write_os_manifest(record + "\n" + self.valid_os_manifest())
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any("record must be shorter" in error for error in errors))
+
+    def test_os_manifest_accepts_maximum_record_boundary(self):
+        record = "#" + "x" * (validate.MAX_OS_RECORD_BYTES - 2)
+        self.write_os_manifest(record + "\n" + self.valid_os_manifest())
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_os_manifest_rejects_lone_cr(self):
+        self.write_os_manifest(self.valid_os_manifest().replace("\n", "\r"))
+        errors = validate.validate_catalog(self.root)
+        self.assertTrue(any("control characters" in error for error in errors))
+
+    def test_catalog_closes_descriptors_when_manifest_discovery_fails(self):
+        real_close = validate.os.close
+        closed: list[int] = []
+
+        def close(file_fd):
+            closed.append(file_fd)
+            real_close(file_fd)
+
+        with mock.patch.object(validate.os, "close", side_effect=close), mock.patch.object(
+            validate.os, "listdir", side_effect=[[".gitkeep"], OSError("injected failure")]
+        ):
+            with self.assertRaises(OSError):
+                validate.validate_catalog(self.root, allow_empty=True)
+        self.assertEqual(len(closed), 2)
+        self.assertEqual(len(set(closed)), 2)
+
+    def test_catalog_rejects_symlinked_catalog_directories(self):
+        for name in ("manifests", "releases"):
+            with self.subTest(name=name):
+                target = self.root / f"outside-{name}"
+                target.mkdir()
+                original = self.root / name
+                original.rmdir()
+                original.symlink_to(target, target_is_directory=True)
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any(f"{name}: symlinks are not allowed" in error for error in errors))
+                original.unlink()
+                original.mkdir()
+
     def test_empty_catalog_requires_explicit_bootstrap_mode(self):
         self.assertTrue(validate.validate_catalog(self.root))
         self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_catalog_accepts_regular_gitkeep(self):
+        (self.root / "releases" / ".gitkeep").write_text("", encoding="utf-8")
+        (self.root / "manifests" / ".gitkeep").write_text("", encoding="utf-8")
+        self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
+
+    def test_catalog_rejects_unsafe_gitkeep_entries(self):
+        for kind in ("symlink", "directory"):
+            with self.subTest(kind=kind):
+                target = self.root / f"outside-{kind}"
+                if kind == "symlink":
+                    target.write_text("", encoding="utf-8")
+                    (self.root / "manifests" / ".gitkeep").symlink_to(target)
+                else:
+                    (self.root / "manifests" / ".gitkeep").mkdir()
+                errors = validate.validate_catalog(self.root, allow_empty=True)
+                self.assertTrue(any("manifests/.gitkeep" in error for error in errors))
+                gitkeep = self.root / "manifests" / ".gitkeep"
+                if gitkeep.is_symlink() or gitkeep.is_file():
+                    gitkeep.unlink()
+                else:
+                    gitkeep.rmdir()
 
     def test_catalog_rejects_symlink(self):
         target = self.root / "outside.json"
