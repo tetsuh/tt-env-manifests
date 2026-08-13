@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location(
@@ -363,6 +364,28 @@ WORKAROUNDS=()
         errors = validate.validate_catalog(self.root, allow_empty=True)
         self.assertTrue(any("aggregate limit" in error for error in errors))
 
+    def test_direct_os_manifest_accepts_exact_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        padding = validate.MAX_OS_TOTAL_BYTES - len(base)
+        content = bytearray(base)
+        while padding >= 2:
+            chunk = min(65535, padding)
+            content.extend(b"#" + b"x" * (chunk - 2) + b"\n")
+            padding -= chunk
+        if padding:
+            content.extend(b"\n")
+        self.assertEqual(len(content), validate.MAX_OS_TOTAL_BYTES)
+        path = self.write_os_manifest(content.decode("ascii"))
+        validate.validate_os_manifest(path)
+
+    def test_direct_os_manifest_rejects_over_aggregate_limit(self):
+        base = self.valid_os_manifest().encode("ascii")
+        content = base + b"#x\n" * ((validate.MAX_OS_TOTAL_BYTES - len(base)) // 3 + 1)
+        self.assertGreater(len(content), validate.MAX_OS_TOTAL_BYTES)
+        path = self.write_os_manifest(content.decode("ascii"))
+        with self.assertRaisesRegex(validate.ValidationError, "aggregate limit"):
+            validate.validate_os_manifest(path)
+
     def test_os_manifest_rejects_oversized_records(self):
         for record in (
             "#" + "x" * (validate.MAX_OS_RECORD_BYTES - 1),
@@ -382,6 +405,22 @@ WORKAROUNDS=()
         self.write_os_manifest(self.valid_os_manifest().replace("\n", "\r"))
         errors = validate.validate_catalog(self.root)
         self.assertTrue(any("control characters" in error for error in errors))
+
+    def test_catalog_closes_descriptors_when_manifest_discovery_fails(self):
+        real_close = validate.os.close
+        closed: list[int] = []
+
+        def close(file_fd):
+            closed.append(file_fd)
+            real_close(file_fd)
+
+        with mock.patch.object(validate.os, "close", side_effect=close), mock.patch.object(
+            validate.os, "listdir", side_effect=[[".gitkeep"], OSError("injected failure")]
+        ):
+            with self.assertRaises(OSError):
+                validate.validate_catalog(self.root, allow_empty=True)
+        self.assertEqual(len(closed), 2)
+        self.assertEqual(len(set(closed)), 2)
 
     def test_catalog_rejects_symlinked_catalog_directories(self):
         for name in ("manifests", "releases"):

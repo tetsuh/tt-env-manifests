@@ -299,12 +299,36 @@ def validate_os_manifest_content(path: Path, content_bytes: bytes) -> tuple[dict
     return scalars, arrays
 
 
-def validate_os_manifest(path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
+def _read_file_descriptor(file_fd: int, max_bytes: int | None = None) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        size = 65536 if max_bytes is None else min(65536, max_bytes + 1 - total)
+        chunk = os.read(file_fd, size)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if max_bytes is not None and total > max_bytes:
+            raise ValidationError(f"file exceeds aggregate limit of {max_bytes} bytes")
+    return b"".join(chunks)
+
+
+def read_path(path: Path, max_bytes: int | None = None) -> bytes:
     try:
-        content = path.read_bytes()
+        file_fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
     except OSError as exc:
         raise ValidationError(str(exc)) from exc
-    return validate_os_manifest_content(path, content)
+    try:
+        return _read_file_descriptor(file_fd, max_bytes)
+    except OSError as exc:
+        raise ValidationError(f"cannot read catalog entry: {exc}") from exc
+    finally:
+        os.close(file_fd)
+
+
+def validate_os_manifest(path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
+    return validate_os_manifest_content(path, read_path(path, MAX_OS_TOTAL_BYTES))
 
 
 CatalogEntry = tuple[Path, int, str, os.stat_result]
@@ -365,18 +389,7 @@ def read_catalog_entry(entry: CatalogEntry, max_bytes: int | None = None) -> byt
             and (actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino),
             "catalog entry changed during validation",
         )
-        chunks: list[bytes] = []
-        total = 0
-        while True:
-            size = 65536 if max_bytes is None else min(65536, max_bytes + 1 - total)
-            chunk = os.read(file_fd, size)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if max_bytes is not None and total > max_bytes:
-                raise ValidationError(f"file exceeds aggregate limit of {max_bytes} bytes")
-        return b"".join(chunks)
+        return _read_file_descriptor(file_fd, max_bytes)
     except OSError as exc:
         raise ValidationError(f"cannot read catalog entry: {exc}") from exc
     finally:
@@ -385,9 +398,11 @@ def read_catalog_entry(entry: CatalogEntry, max_bytes: int | None = None) -> byt
 
 def validate_catalog(root: Path = ROOT, allow_empty: bool = False) -> list[str]:
     errors: list[str] = []
-    release_fd, release_entries = catalog_paths(root / "releases", ".json", root, errors)
-    manifest_fd, manifest_entries = catalog_paths(root / "manifests", ".env", root, errors)
+    release_fd: int | None = None
+    manifest_fd: int | None = None
     try:
+        release_fd, release_entries = catalog_paths(root / "releases", ".json", root, errors)
+        manifest_fd, manifest_entries = catalog_paths(root / "manifests", ".env", root, errors)
         if not allow_empty:
             if not release_entries:
                 errors.append("releases: at least one release manifest is required")
