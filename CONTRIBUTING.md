@@ -20,7 +20,6 @@ substitutions. See `docs/manifest-format.md` for accepted syntax.
 ## Checks
 
 ```bash
-# --allow-empty is temporary during initial catalog bootstrap.
-python3 scripts/validate.py --allow-empty
+python3 scripts/validate.py
 python3 -m unittest discover -s tests -v
 ```

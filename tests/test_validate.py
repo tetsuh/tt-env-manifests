@@ -278,6 +278,53 @@ WORKAROUNDS=()
         self.write_os_manifest(value)
         self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
 
+    def test_committed_release_manifests_have_verified_pins(self):
+        expected = {
+            "0.67.0": {
+                "runtime": "39f92aa795c28b1836947300d6556c7e3a7ccdba12e9aa60b3ad3be05df2e5c8",
+                "models": "df7c675f80c4adc8bfd97d9a0da18b2ea86542c903bade2d71f7a9e8f9092fd8",
+            },
+            "0.67.4": {
+                "runtime": "2cc5bcf40755597bde650980be6d15fa6898f2f19ce712fd1074e6d2c5201581",
+                "models": "05c568161f72bd4b64e77ab6fb0ea51110ef12b2d1b6df557c698bc1fb54ed3e",
+            },
+            "0.68.0": {
+                "runtime": "1d811ad04e5d212ebe6436edfbfde979d43c5fa7600880baad8b2059b9c1510b",
+                "models": "be2275a89d4209be0f42d91081b851acfd3ac0938fe5ce035997da0eda8ba2f4",
+            },
+        }
+        root = Path(__file__).parents[1]
+        for release, digests in expected.items():
+            with self.subTest(release=release):
+                path = root / "releases" / f"{release}.json"
+                value = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(value["release"], release)
+                self.assertEqual(
+                    value["components"],
+                    {
+                        "tt-metal": f"v{release}",
+                        "tt-kmd": "2.5.0",
+                        "firmware": "19.2.0",
+                        "tt-smi": "3.0.38",
+                    },
+                )
+                containers = value["container_components"]
+                self.assertEqual(containers["tt-metalium"], {"ref": "tt-metalium-ubuntu24"})
+                self.assertEqual(
+                    containers["tt-metalium-ubuntu24"],
+                    {
+                        "image_url": "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-24.04-release-amd64",
+                        "image_tag": "sha256:" + digests["runtime"],
+                    },
+                )
+                self.assertEqual(
+                    containers["tt-metalium-models"],
+                    {
+                        "image_url": "ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-models-amd64",
+                        "image_tag": "sha256:" + digests["models"],
+                    },
+                )
+
     def test_committed_ubuntu_manifests_have_exact_consumer_values(self):
         expected_scalars = {
             "PKG_MANAGER": "apt",
@@ -435,7 +482,7 @@ WORKAROUNDS=()
                 original.unlink()
                 original.mkdir()
 
-    def test_empty_catalog_requires_explicit_bootstrap_mode(self):
+    def test_empty_catalog_is_rejected_by_default(self):
         self.assertTrue(validate.validate_catalog(self.root))
         self.assertEqual(validate.validate_catalog(self.root, allow_empty=True), [])
 
