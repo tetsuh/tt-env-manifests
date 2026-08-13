@@ -31,8 +31,7 @@ repository.
 Run before opening a pull request:
 
 ```bash
-# Remove --allow-empty after the initial catalog entries are published.
-python3 scripts/validate.py --allow-empty
+python3 scripts/validate.py
 python3 -m unittest discover -s tests -v
 ```
 

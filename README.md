@@ -18,13 +18,9 @@ filenames.
 ## Validation
 
 ```bash
-# --allow-empty is temporary while the initial catalog is bootstrapped.
-python3 scripts/validate.py --allow-empty
+python3 scripts/validate.py
 python3 -m unittest discover -s tests -v
 ```
-
-The empty-catalog exception will be removed when the first release and OS
-manifests are published.
 
 Validation checks data shape, immutable pins, filename consistency, and the
 restricted OS manifest grammar. It does not prove that a release installs or

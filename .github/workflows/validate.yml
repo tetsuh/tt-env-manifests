@@ -20,9 +20,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
-      # Remove --allow-empty after the initial catalog entries are published.
       - name: Validate catalog
-        run: python3 scripts/validate.py --allow-empty
+        run: python3 scripts/validate.py
 
       - name: Run validator tests
         run: python3 -m unittest discover -s tests -v

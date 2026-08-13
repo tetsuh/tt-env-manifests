@@ -56,8 +56,69 @@ installation, and hardware compatibility remain separate validation stages.
 The signed jammy/noble source-line behavior is upstream documentation, not
 codename construction or resolution currently implemented by tt-env-go.
 
-## Initial release range
+## Stack releases
 
-The initial catalog will cover stable upstream tt-metal releases from `v0.67.0`
-through `v0.75.0`. Release-specific provenance and validation results will be
-added with each release manifest.
+The upstream tt-metal release table at commit
+[`d92d211`](https://github.com/tenstorrent/tt-metal/blob/d92d2113baeb140ed4e6b7a6665aaf8756f95df2/README.md#latest-releases)
+records firmware `19.2.0`, KMD `2.5.0`, and TT-SMI `3.0.38` for `v0.67.0`,
+`v0.67.4`, and `v0.68.0`. The release manifests preserve those component
+versions. GitHub's official release and package APIs were queried on 2026-08-13
+to verify stable release status, archive checksums, image tags, and immutable
+image digests.
+
+These historical entries intentionally leave `system_packages` and
+`python_packages` empty because the cited upstream sources do not establish the
+complete package pins required by tt-env-go. Consequently, tt-env-go's Ubuntu
+`USE_SYSTEM_PACKAGES=true` installation plan currently rejects these entries
+before installation; their catalog and immutable container metadata remain
+available. This is a known consumer limitation, not merely missing install or
+hardware test evidence. Package pins must not be inferred from component
+compatibility versions.
+
+### tt-metal v0.67.0 (`releases/0.67.0.json`)
+
+- **Upstream release:** [GitHub Release](https://github.com/tenstorrent/tt-metal/releases/tag/v0.67.0),
+  published 2026-03-21. The official
+  [release API](https://api.github.com/repos/tenstorrent/tt-metal/releases/tags/v0.67.0)
+  reports `tt-metalium.tar.gz` SHA-256
+  `5c3ef352c6fab65576144fbf00893a846e009b553fc35d99c977e0c680477919`.
+- **Container provenance:** Official GHCR package versions pin tag `v0.67.0`
+  for the [Ubuntu 24.04 runtime](https://github.com/orgs/tenstorrent/packages/container/tt-metal%2Ftt-metalium-ubuntu-24.04-release-amd64/749903197)
+  at digest `sha256:39f92aa795c28b1836947300d6556c7e3a7ccdba12e9aa60b3ad3be05df2e5c8`
+  and the [Ubuntu 22.04 models image](https://github.com/orgs/tenstorrent/packages/container/tt-metal%2Ftt-metalium-ubuntu-22.04-release-models-amd64/749925506)
+  at digest `sha256:df7c675f80c4adc8bfd97d9a0da18b2ea86542c903bade2d71f7a9e8f9092fd8`.
+- **Validation:** Catalog/schema validated. No installation or hardware
+  validation was performed in this repository.
+
+### tt-metal v0.67.4 (`releases/0.67.4.json`)
+
+- **Upstream release:** [GitHub Release](https://github.com/tenstorrent/tt-metal/releases/tag/v0.67.4),
+  published 2026-03-28. The official
+  [release API](https://api.github.com/repos/tenstorrent/tt-metal/releases/tags/v0.67.4)
+  reports `tt-metalium.tar.gz` SHA-256
+  `ae3964dfd1c454fb7cfcd52bd521e703b7b6083ca363d748a3d5d74eb1123408`.
+- **Container provenance:** Official GHCR package versions pin tag `v0.67.4`
+  for the [Ubuntu 24.04 runtime](https://github.com/orgs/tenstorrent/packages/container/tt-metal%2Ftt-metalium-ubuntu-24.04-release-amd64/763862109)
+  at digest `sha256:2cc5bcf40755597bde650980be6d15fa6898f2f19ce712fd1074e6d2c5201581`
+  and the [Ubuntu 22.04 models image](https://github.com/orgs/tenstorrent/packages/container/tt-metal%2Ftt-metalium-ubuntu-22.04-release-models-amd64/763883651)
+  at digest `sha256:05c568161f72bd4b64e77ab6fb0ea51110ef12b2d1b6df557c698bc1fb54ed3e`.
+- **Validation:** Catalog/schema validated. No installation or hardware
+  validation was performed in this repository.
+
+### tt-metal v0.68.0 (`releases/0.68.0.json`)
+
+- **Upstream release:** [GitHub Release](https://github.com/tenstorrent/tt-metal/releases/tag/v0.68.0),
+  published 2026-04-11. The official
+  [release API](https://api.github.com/repos/tenstorrent/tt-metal/releases/tags/v0.68.0)
+  reports `tt-metalium.tar.gz` SHA-256
+  `ae9d041fec2acc4be7de455f57873047772f06624f18f6074bf7e3a5e429a67b`.
+- **Container provenance:** Official GHCR package versions pin tag `v0.68.0`
+  for the [Ubuntu 24.04 runtime](https://github.com/orgs/tenstorrent/packages/container/tt-metal%2Ftt-metalium-ubuntu-24.04-release-amd64/789552822)
+  at digest `sha256:1d811ad04e5d212ebe6436edfbfde979d43c5fa7600880baad8b2059b9c1510b`
+  and the [Ubuntu 22.04 models image](https://github.com/orgs/tenstorrent/packages/container/tt-metal%2Ftt-metalium-ubuntu-22.04-release-models-amd64/789610716)
+  at digest `sha256:be2275a89d4209be0f42d91081b851acfd3ac0938fe5ce035997da0eda8ba2f4`.
+- **Validation:** Catalog/schema validated. No installation or hardware
+  validation was performed in this repository.
+
+The initial catalog will continue through stable upstream tt-metal `v0.75.0`.
+Release-specific provenance and validation results are added with each entry.

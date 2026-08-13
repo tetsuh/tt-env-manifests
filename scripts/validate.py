@@ -429,9 +429,8 @@ def validate_catalog(root: Path = ROOT, allow_empty: bool = False) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--allow-empty", action="store_true", help="allow an empty catalog during repository bootstrap")
-    args = parser.parse_args()
-    errors = validate_catalog(allow_empty=args.allow_empty)
+    parser.parse_args()
+    errors = validate_catalog()
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
