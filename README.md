@@ -11,9 +11,11 @@ Tenstorrent software stack.
 - `docs/manifest-format.md` — manifest contracts
 - `docs/compatibility.md` — release provenance and validation status
 
-The initial catalog targets stable tt-metal releases from `v0.67.0` (March
-2026) onward. The leading `v` is omitted from catalog release identifiers and
-filenames.
+The initial catalog covers stable tt-metal releases from `v0.67.0` through
+`v0.75.0`. Release `v0.75.0` is the initial catalog's designated current
+supported release; earlier entries are historical. Upstream releases newer than
+this initial range require a separate catalog update. The leading `v` is omitted
+from catalog release identifiers and filenames.
 
 ## Validation
 

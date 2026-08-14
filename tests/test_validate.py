@@ -308,22 +308,44 @@ WORKAROUNDS=()
                 "runtime": "44d92ec1ce77b9ba7f11a76630b3a2a046879565f5f9fb1a185b70a3e86010bb",
                 "models": "39f400743f061ba29a43e2cfee7f0b5b6ed7345da6b55f7f04ff16f7430fd5c5",
             },
+            "0.73.1": {
+                "runtime": "4da56a245da7886696052a0b0df038a4eecdac51b2fad03ca6e297748dd462db",
+                "models": "1bae987b68349454ee96d1214d4eede9908705a764b36b4750937f16fd658f2e",
+            },
+            "0.74.0": {
+                "runtime": "fb114849bef0c626e4d0bdbc86dcad94704c447a41b0506c5dd2770ed460d189",
+                "models": "583c339905dfdc83a3ff8de6b0d63a650182d6c04e19f543eda16241730ba532",
+            },
+            "0.75.0": {
+                "runtime": "5215587b1e3887f22f7dcd890c3ff4e23a58cd8e0beeb7569528b8ac2ccae621",
+                "models": "8aadbbaabcc3e293cb656d9fd1ecf6c755738055decc391380f9784276ccec67",
+            },
         }
         root = Path(__file__).parents[1]
+        self.assertEqual({path.stem for path in (root / "releases").glob("*.json")}, set(expected))
         for release, digests in expected.items():
             with self.subTest(release=release):
                 path = root / "releases" / f"{release}.json"
                 value = json.loads(path.read_text(encoding="utf-8"))
                 self.assertEqual(value["release"], release)
+                if release in {"0.73.1", "0.74.0", "0.75.0"}:
+                    kmd, firmware, smi = "2.8.0", "19.8.1", "5.0.0"
+                else:
+                    kmd, firmware, smi = "2.5.0", "19.2.0", "3.0.38"
                 self.assertEqual(
                     value["components"],
                     {
                         "tt-metal": f"v{release}",
-                        "tt-kmd": "2.5.0",
-                        "firmware": "19.2.0",
-                        "tt-smi": "3.0.38",
+                        "tt-kmd": kmd,
+                        "firmware": firmware,
+                        "tt-smi": smi,
                     },
                 )
+                if release == "0.75.0":
+                    expected_description = "Initial catalog-supported Tenstorrent tt-metal v0.75.0 stack release."
+                else:
+                    expected_description = f"Historical Tenstorrent tt-metal v{release} stack release."
+                self.assertEqual(value["description"], expected_description)
                 containers = value["container_components"]
                 self.assertEqual(containers["tt-metalium"], {"ref": "tt-metalium-ubuntu24"})
                 self.assertEqual(
